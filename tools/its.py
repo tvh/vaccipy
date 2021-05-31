@@ -531,6 +531,12 @@ class ImpfterminService():
         else:
             return False
 
+    def termin_valid(self, zeitpunkt):
+        """Hier wird geprüft ob ein einzelner Termin gültig ist.
+        """
+        öffnung = datetime.fromisoformat('2021-06-07T00:02:00')
+        return zeitpunkt >= öffnung
+
     @retry_on_failure()
     def termin_suchen(self, plz):
         """Es wird nach einen verfügbaren Termin in der gewünschten PLZ gesucht.
@@ -565,25 +571,48 @@ class ImpfterminService():
         if res.ok:
             res_json = res.json()
             terminpaare = res_json.get("termine")
+            terminpaare_mapped = list(map(
+                lambda terminpaar : list(map(
+                    lambda termin : {
+                        **termin,
+                        'beginTs': datetime.fromtimestamp(termin["begin"] / 1000)
+                    },
+                    terminpaar,
+                )),
+                terminpaare,
+            ))
+            terminpaare_filtered = list(filter(
+                lambda terminpaar : all(map(lambda x:self.termin_valid(x['beginTs']), terminpaar)),
+                terminpaare_mapped,
+            ))
             if terminpaare:
-                # Auswahl des erstbesten Terminpaares
-                self.terminpaar = choice(terminpaare)
-                self.plz_termin = plz
-                self.log.success(f"Terminpaar gefunden!")
-                self.impfzentrum = self.verfuegbare_impfzentren.get(plz)
-                self.log.success("'{}' in {} {}".format(
-                    self.impfzentrum.get("Zentrumsname").strip(),
-                    self.impfzentrum.get("PLZ"),
-                    self.impfzentrum.get("Ort")))
-                for num, termin in enumerate(self.terminpaar, 1):
-                    ts = datetime.fromtimestamp(termin["begin"] / 1000).strftime(
-                        '%d.%m.%Y um %H:%M Uhr')
-                    self.log.success(f"{num}. Termin: {ts}")
-                if ENABLE_BEEPY:
-                    beepy.beep('coin')
+                if not terminpaare_filtered:
+                    self.log.info("Termine gefunden, aber außerhalb des angefragten Zeitrahmens.")
+                    for n, terminpaar in enumerate(terminpaare_mapped, 1):
+                        self.log.info(f"{n}. Terminpaar")
+                        for num, termin in enumerate(terminpaar, 1):
+                            ts = termin["beginTs"].strftime(
+                                '%d.%m.%Y um %H:%M Uhr')
+                            self.log.info(f"{num}. Termin: {ts}")
                 else:
-                    print("\a")
-                return True, 200
+                    # Auswahl des erstbesten Terminpaares
+                    self.terminpaar = choice(terminpaare_filtered)
+                    self.plz_termin = plz
+                    self.log.success(f"Terminpaar gefunden!")
+                    self.impfzentrum = self.verfuegbare_impfzentren.get(plz)
+                    self.log.success("'{}' in {} {}".format(
+                        self.impfzentrum.get("Zentrumsname").strip(),
+                        self.impfzentrum.get("PLZ"),
+                        self.impfzentrum.get("Ort")))
+                    for num, termin in enumerate(self.terminpaar, 1):
+                        ts = datetime.fromtimestamp(termin["begin"] / 1000).strftime(
+                            '%d.%m.%Y um %H:%M Uhr')
+                        self.log.success(f"{num}. Termin: {ts}")
+                    if ENABLE_BEEPY:
+                        beepy.beep('coin')
+                    else:
+                        print("\a")
+                    return True, 200
             else:
                 self.log.info(f"Keine Termine verfügbar in {plz}")
         else:
